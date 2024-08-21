@@ -868,7 +868,9 @@ class CParser(PLYParser):
                             | BACKTICK identifier_list BACKTICK
                             | BACKTICK REGISTER identifier_list BACKTICK
                             | BACKTICK constant BACKTICK identifier_list BACKTICK
+                            | BACKTICK constant BACKTICK constant BACKTICK identifier_list BACKTICK
                             | BACKTICK constant BACKTICK REGISTER identifier_list BACKTICK
+                            | BACKTICK constant BACKTICK constant BACKTICK REGISTER identifier_list BACKTICK
                             | BACKTICK constant BACKTICK
         """
         s = []
