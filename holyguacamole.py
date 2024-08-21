@@ -3,7 +3,7 @@
 
 import os, sys, subprocess, json
 import holypycparser as hpp
-import pycparser
+import pycparser, holygrail
 
 tests = [
 '''
@@ -643,7 +643,7 @@ static inline void uart_init(){
 }
 '''
 
-def make(asm, spawn_funcs, use_uart=True):
+def make(asm, spawn_funcs, use_uart=True, use_vga=True):
 	a = c2asm(
 		ARCH + ARCH_ASM + CPU_H + PROC_H + INTERRUPTS + TIMER + TRAP_C, 
 		{},[],
@@ -653,7 +653,15 @@ def make(asm, spawn_funcs, use_uart=True):
 	print_asm(a)
 	trap_handler = asm2o(a, name='trap_handler')
 
-	s = [START_S, gen_trap_s(), clean_asm(asm)]
+	if use_vga: s = [holygrail.START_VGA_S]
+	else: s = [START_S]
+	s += [gen_trap_s(), clean_asm(asm)]
+	if use_vga:
+		s += [
+			'.section .rodata', 
+			holygrail.MODE_13H, holygrail.gen_pal(),
+		]
+
 	o = asm2o('\n'.join(s))
 
 	c = [
