@@ -67,14 +67,46 @@ tests = [
 }
 ''',
 
+'''
+// cpu core
+`
+// thread id
+`0
+// registers
+`a0,a1,a2,a3,a4,a5,a6,a8
+`U0 ThreadA() {
+	U8 c = 10;
+	while (1){
+		PUTPIXEL(0,0, c);
+		PUTPIXEL(1,1, c);
+		PUTPIXEL(2,2, c);
+		PUTPIXEL(3,3, c);
+		c++;
+	}
+}
+
+`1`1`s0,s1,s2,s3,s4,s5,s6,s8`U0 ThreadB() {
+	U8 B = 10;
+	U8 c = 0;
+	while (1){
+		PUTPIXEL(B+10,B, c);
+		B ++;
+		c ++;
+	}
+}
+''',
+
 
 ]
 
 def parse_holyg(ln):
 	ln = ln[ : ln.rindex('`') ].strip()
+	cpu_core = None
 	thread_id = -1
 	regs = {}
-	for i, a in enumerate(ln.split('`')):
+	ln = ln.split('`')
+	ln.reverse()
+	for i, a in enumerate(ln):
 		if ',' in a:
 			for reg in a.split(','):
 				reg = reg.strip()
@@ -85,9 +117,13 @@ def parse_holyg(ln):
 				elif reg.startswith('s'):
 					regs[ reg ] = reg.replace('s', 'a')
 		elif a.strip().isdigit():
-			thread_id = int(a.strip())
+			if thread_id == -1:
+				thread_id = int(a.strip())
+			else:
+				assert cpu_core is None
+				cpu_core = int(a.strip())
 
-	return (thread_id,regs)
+	return (cpu_core, thread_id,regs)
 
 def c2asm( c, reg_replace_map, spawn_funcs, opt=0, strip_backticks=True ):
 	if type(c) is list: c = '\n'.join(c)
@@ -99,11 +135,15 @@ def c2asm( c, reg_replace_map, spawn_funcs, opt=0, strip_backticks=True ):
 				assert prev.startswith('//JSON//')
 				finfo = json.loads( prev[ len('//JSON//') : ] )
 				print(finfo)
-				t,r = parse_holyg(ln)
+				core, t,r = parse_holyg(ln)
 				reg_replace_map[finfo['name']] = r
 				if t >= 0:
 					finfo['thread'] = t
 					spawn_funcs.append(finfo)
+				if core is not None:
+					finfo['cpu_core'] = core
+				else:
+					finfo['cpu_core'] = 0
 				ln = ln.split('`')[-1]
 
 			a.append(ln)
@@ -413,7 +453,7 @@ enum proc_state {
 struct HolyThread {
 	enum proc_state state;
 	U32 pid;
-	U8 name[PROC_NAME_MAXLEN];
+//	U8 name[PROC_NAME_MAXLEN];
 	struct cpu cpu;
 	U64 hartid;
 };
@@ -454,9 +494,9 @@ def gen_firmware( spawn_funcs, stack_mb=1 ):
 	for p,o in enumerate(spawn_funcs):
 		out += [
 			'struct HolyThread __proc__%s = {' % o['name'],
-			'  .name = "%s",' % o['name'],
+			#'  .name = "%s",' % o['name'],
 			'  .pid = %s,' % (p+0),
-			'  .hartid = 0,',  ## cpu core
+			'  .hartid = %s,' % o['cpu_core'],
 			'  .state = PROC_STATE_READY,',
 			'  .cpu = {',
 			'      .pc = (U64)%s,' % o['name'],
@@ -502,7 +542,6 @@ void kernel_trap_handler() {
 	}
 }
 '''
-
 
 TIMER = '''
 #define MTIME 0x200bff8
@@ -703,12 +742,17 @@ def make(asm, spawn_funcs, use_uart=True, use_vga=True):
 		subprocess.check_call(cmd.split())
 	return elf
 
+THREAD_API = '''
+#define VRAM ((volatile char *)0x50000000)
+#define PUTPIXEL(x,y,c) VRAM[y*320 + x] = c
+'''
 
 def run_tests():
+	tests.reverse()
 	for t in tests:
 		print(t)
 		print('-'*80)
-		c = hpp.holyc_to_c( t )
+		c = THREAD_API+hpp.holyc_to_c( t )
 		print(c)
 		print('_'*80)
 		func_reg_replace = {}
@@ -720,6 +764,7 @@ def run_tests():
 		print('asm2asm output:')
 		print_asm(a)
 		elf = make(a, spawn_funcs)
+		break
 
 def build(files):
 	a = [open(f,'rb').read().decode('utf-8') for f in files]
