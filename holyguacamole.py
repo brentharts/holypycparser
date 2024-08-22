@@ -159,8 +159,9 @@ def c2asm( c, reg_replace_map, spawn_funcs, opt=0, strip_backticks=True ):
 	cmd = [
 		'riscv64-unknown-elf-gcc', '-mcmodel=medany', '-fomit-frame-pointer', '-ffunction-sections',
 		'-ffreestanding', '-nostdlib', '-nostartfiles', '-nodefaultlibs', '-fno-tree-loop-distribute-patterns', 
-		'-fno-optimize-register-move', '-fno-sched-pressure', '-fno-sched-interblock',
+		#'-fno-optimize-register-move', '-fno-sched-pressure', '-fno-sched-interblock',
 		'-ffixed-t0', '-ffixed-t1', '-ffixed-t2', '-ffixed-t3', '-ffixed-t4', '-ffixed-t5', '-ffixed-t6',
+		#'-ffixed-a7',
 		opt, 
 		#'-g', 
 		'-S', '-o', asm, tmp
@@ -454,7 +455,6 @@ enum proc_state {
 struct HolyThread {
 	enum proc_state state;
 	U32 pid;
-//	U8 name[PROC_NAME_MAXLEN];
 	struct cpu cpu;
 	U64 hartid;
 };
@@ -484,18 +484,17 @@ void firmware_main(){
 }
 '''
 
-def gen_firmware( spawn_funcs, stack_mb=1 ):
+def gen_firmware( spawn_funcs, stack_kb=1 ):
 	out = []
 	for f in spawn_funcs:
 		out.append('extern void %s();' % f['name'])
 		out.append('extern void %s();' % f['name'])
-		out.append('U8 __stack__%s[%s];' % (f['name'], int(1024*1024*stack_mb) ))
+		out.append('U8 __stack__%s[%s];' % (f['name'], int(1024*stack_kb) ))
 
 	out += ['void kernel_threads_init(){']
 	for p,o in enumerate(spawn_funcs):
 		out += [
 			'struct HolyThread __proc__%s = {' % o['name'],
-			#'  .name = "%s",' % o['name'],
 			'  .pid = %s,' % (p+0),
 			'  .hartid = %s,' % o['cpu_core'],
 			'  .state = PROC_STATE_READY,',
@@ -513,36 +512,33 @@ def gen_firmware( spawn_funcs, stack_mb=1 ):
 	return out
 
 
+## safe to call without a stack pointer
 TRAP_C = r'''
 struct cpu trap_cpu;
-U8 trap_stack[1 << 20];
-void *trap_stack_top = &trap_stack[sizeof(trap_stack) - 1];
 I32 active_pid;
 struct HolyThread __proc_list[PROC_NAME_MAXLEN] = {};
 
 __attribute__((optimize("no-tree-loop-distribute-patterns")))
 void kernel_trap_handler() {
-	U64 mcause = csrr_mcause();
-	if (mcause==MCAUSE_INTR_M_TIMER){
-		if (active_pid < 0){
-			active_pid = 0;
-			trap_cpu = __proc_list[0].cpu;
-		}
-		__proc_list[active_pid].cpu = trap_cpu; // save cpu state for the active process
-		__proc_list[active_pid].state = PROC_STATE_READY; // suspend the active process
-		for (int ring_index = 1; ring_index <= PROC_TOTAL_COUNT; ring_index++){
-			int real_index = (active_pid + ring_index) % PROC_TOTAL_COUNT;
-			struct HolyThread *proc = &__proc_list[real_index];
-			if (proc->state == PROC_STATE_READY){
-				trap_cpu = proc->cpu;
-				active_pid = proc->pid;
-				break;
-			}
-		}
-		kernel_timeout();
+	if (active_pid < 0){
+		active_pid = 0;
+		trap_cpu = __proc_list[0].cpu;
 	}
+	__proc_list[active_pid].cpu = trap_cpu; // save cpu state for the active process
+	__proc_list[active_pid].state = PROC_STATE_READY; // suspend the active process
+	for (int ring_index = 1; ring_index <= PROC_TOTAL_COUNT; ring_index++){
+		int real_index = (active_pid + ring_index) % PROC_TOTAL_COUNT;
+		struct HolyThread *proc = &__proc_list[real_index];
+		if (proc->state == PROC_STATE_READY){
+			trap_cpu = proc->cpu;
+			active_pid = proc->pid;
+			break;
+		}
+	}
+	kernel_timeout();
 }
 '''
+
 
 TIMER = '''
 #define MTIME 0x200bff8
@@ -591,36 +587,31 @@ REMAP_TRAP = {
 	'a4' : 't4',
 	'a5' : 't5',
 	'a6' : 't6',
-	'a7' : 'gp',
+	'a7' : 'sp', #'gp',
 }
 
-def gen_trap_s( ra=True ):
+def gen_trap_s():
 	s = '''
 .equ REGSZ, 8
 .global trap_entry
 trap_entry:
 	csrrw sp, mscratch, sp
 	la tp, trap_cpu
-	#sd ra, (1 * REGSZ)(tp)
+	sd ra, (1 * REGSZ)(tp)
 	## save program counter
 	csrr t0, mepc
 	sd t0, (32 * REGSZ)(tp)
-	## call trap_handler C function
-	la t0, trap_stack_top
-	ld sp, 0(t0)
 	call kernel_trap_handler
 	## restore program counter
 	ld t0, (32 * REGSZ)(tp)
 	csrw mepc, t0
 	csrr sp, mscratch
-	#ld ra, (1 * REGSZ)(tp)
+	ld ra, (1 * REGSZ)(tp)
 	mret
 	'''
-	if ra: s = s.replace('#sd', 'sd').replace('#ld','ld')
 	return s
 
 
-#.attribute arch, "rv64g"
 START_S = '''
 .section .text
 .global _start
@@ -634,6 +625,7 @@ def clean_asm(asm):
 	a = []
 	for ln in asm.splitlines():
 		if ln.strip().startswith(('.file', '.option', '.attribute')): continue
+		if ln.strip().startswith(('.type', '.section', '.size', '.ident')): continue
 		a.append(ln)
 	return '\n'.join(a)
 
@@ -688,6 +680,7 @@ def make(asm, spawn_funcs, use_uart=True, use_vga=True):
 		ARCH + ARCH_ASM + CPU_H + PROC_H + INTERRUPTS + TIMER + TRAP_C, 
 		{},[],
 		opt=1
+		#opt='s'
 	)
 	a = asm2asm(a, reg_replace=REMAP_TRAP )
 	print_asm(a)
