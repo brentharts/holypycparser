@@ -69,18 +69,19 @@ tests = [
 
 '''
 // cpu core
-`
+`1
 // thread id
 `0
 // registers
 `a0,a1,a2,a3,a4,a5,a6,a8
 `U0 ThreadA() {
+	U8 a = 0;
 	U8 c = 10;
 	while (1){
-		PUTPIXEL(0,0, c);
-		PUTPIXEL(1,1, c);
-		PUTPIXEL(2,2, c);
-		PUTPIXEL(3,3, c);
+		PUTPIXEL(0,0+a, c);
+		PUTPIXEL(1,1+a, c);
+		PUTPIXEL(2,2+a, c);
+		PUTPIXEL(3,3+a, c);
 		c++;
 	}
 }
@@ -748,7 +749,6 @@ THREAD_API = '''
 '''
 
 def run_tests():
-	tests.reverse()
 	for t in tests:
 		print(t)
 		print('-'*80)
@@ -764,11 +764,10 @@ def run_tests():
 		print('asm2asm output:')
 		print_asm(a)
 		elf = make(a, spawn_funcs)
-		break
 
 def build(files):
 	a = [open(f,'rb').read().decode('utf-8') for f in files]
-	c = hpp.holyc_to_c( a )
+	c = THREAD_API+hpp.holyc_to_c( a )
 	print(c)
 	print('_'*80)
 	func_reg_replace = {}
