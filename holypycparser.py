@@ -99,11 +99,11 @@ def holyjit( h, output='/tmp/holyjit.so', debug=False ):
 	return scope
 
 def holyc_to_c(hc, strip_comments=True, pass_includes=True):
-	if hc.endswith( ('.HC', '.hc') ):
-		hc = open(hc,'rb').read().decode('utf-8')
-	tmp = '/tmp/hc2c.HC'
 	if type(hc) is list:
 		hc = '\n'.join(hc)
+	elif hc.endswith( ('.HC', '.hc') ):
+		hc = open(hc,'rb').read().decode('utf-8')
+	tmp = '/tmp/hc2c.HC'
 
 	if strip_comments:
 		a = []
