@@ -255,8 +255,11 @@ def parse_asm(ln, debug=False):
 		return r
 	elif len(a)==2:
 		inst, ops = a
+	elif len(a)==4:
+		inst = a[0]
+		ops = ' '.join(a[1:])
 	else:
-		raise RuntimeError(ln)
+		raise RuntimeError(len(a),ln)
 	if not ops:
 		return r
 
@@ -266,6 +269,7 @@ def parse_asm(ln, debug=False):
 	vis = []
 	for b in ops.split(','):
 		index = None
+		b = b.strip()
 		if '(' in b:
 			index = b.split('(')[0]
 			b = b.split('(')[-1][:-1]
@@ -746,7 +750,7 @@ def make(asm, spawn_funcs, use_uart=USE_UART, use_vga=True):
 			atexit.register(lambda: proc.kill())
 
 			gcmd = ['gdb-multiarch', '--batch', '--command=/tmp/script.gdb', elf]
-			if os.path.isfile('/usr/bin/xterm') and 0:
+			if os.path.isfile('/usr/bin/xterm'):
 				gcmd = ['xterm', '-hold', '-e', ' '.join(gcmd)]
 			elif os.path.isfile('/usr/bin/konsole'):
 				gcmd = ['konsole', '--separate', '--hold', '-e', ' '.join(gcmd)]
