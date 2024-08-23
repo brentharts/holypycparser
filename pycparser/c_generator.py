@@ -226,7 +226,10 @@ class CGenerator(object):
         if isinstance(n, c_ast.InitList):
             return '{' + self.visit(n) + '}'
         elif isinstance(n, c_ast.ExprList):
-            return '(' + self.visit(n) + ')'
+            if n.asm:
+                return '__asm__(' + self.visit(n) + ')'
+            else:
+                return '(' + self.visit(n) + ')'
         else:
             return self.visit(n)
 
@@ -511,6 +514,9 @@ class CGenerator(object):
                 return '%sprintf(%s);\n' % (indent, self.visit(n))
             # These can also appear in an expression context so no semicolon
             # is added to them automatically
+            if type(n) is c_ast.ExprList and n.asm:
+                return '%s__asm__(%s);\n' %(indent, self.casm2asm(n) )
+
             return indent + self.visit(n) + ';\n'
         elif typ in (c_ast.Compound,):
             # No extra indentation required before the opening brace of a
@@ -618,3 +624,13 @@ class CGenerator(object):
                 for a in n.type.args.holy_param_defaults:
                     f['defaults'][a] = n.type.args.holy_param_defaults[a]
         return json.dumps(f)
+
+    def casm2asm(self, n):
+        if len(n.exprs)==1 and type(n.exprs[0]) is c_ast.Assignment:
+            if n.exprs[0].op == '+=':
+                a = n.exprs[0]
+                reg = a.lvalue.name
+                return '"addi %s, %s, %s"' %(reg, reg, a.rvalue.value )
+        
+        print(n)
+        raise RuntimeError('casm2asm TODO')
