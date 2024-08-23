@@ -1681,9 +1681,12 @@ class CParser(PLYParser):
     def p_expression(self, p):
         """ expression  : assignment_expression
                         | expression COMMA assignment_expression
+                        | BACKTICK assignment_expression
         """
         if len(p) == 2:
             p[0] = p[1]
+        elif len(p)==3 and p[1]=='`':
+            p[0] = c_ast.ExprList([p[2]], p[2].coord, asm=True)
         else:
             if not isinstance(p[1], c_ast.ExprList):
                 p[1] = c_ast.ExprList([p[1]], p[1].coord)
