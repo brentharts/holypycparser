@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # HolyGuacamole : Brent Hartshorn - Aug 20, 2024
 
-import os, sys, subprocess, json
+import os, sys, subprocess, json, atexit
 import holypycparser as hpp
 import pycparser, holygrail
 
@@ -387,7 +387,7 @@ asm_help = {
 
 def asm2o(s, name='asm2o'):
 	s += '\n'
-	asm = '/tmp/asm2o.s'
+	asm = '/tmp/%s.s' % name
 	open(asm,'wb').write(s.encode('utf-8'))
 	o = '/tmp/%s.o' % name
 	cmd = [ 'riscv64-unknown-elf-as', 
@@ -484,12 +484,12 @@ void firmware_main(){
 }
 '''
 
-def gen_firmware( spawn_funcs, stack_kb=1 ):
+def gen_firmware( spawn_funcs, stack_kb=32 ):
 	out = []
 	for f in spawn_funcs:
 		out.append('extern void %s();' % f['name'])
-		out.append('extern void %s();' % f['name'])
-		out.append('U8 __stack__%s[%s];' % (f['name'], int(1024*stack_kb) ))
+		out.append('U8 __stack__%s[%s] __attribute__((aligned(16)));' % (f['name'], int(1024*stack_kb) ))
+		out.append('void *__stacktop__%s = &__stack__%s[sizeof(__stack__%s)-1];' % (f['name'], f['name'], f['name'] ))
 
 	out += ['void kernel_threads_init(){']
 	for p,o in enumerate(spawn_funcs):
@@ -500,7 +500,7 @@ def gen_firmware( spawn_funcs, stack_kb=1 ):
 			'  .state = PROC_STATE_READY,',
 			'  .cpu = {',
 			'      .pc = (U64)%s,' % o['name'],
-			'      .x2 = (U64)__stack__%s,' % o['name'],
+			'      .x2 = (U64)__stacktop__%s,' % o['name'],
 			'  }};',
 			#'uart_print("[proc_init] proc_list:%s");' % p,
 			'__proc_list[%s] = __proc__%s;' % (p, o['name']),
@@ -514,7 +514,7 @@ def gen_firmware( spawn_funcs, stack_kb=1 ):
 
 ## safe to call without a stack pointer
 TRAP_C = r'''
-struct cpu trap_cpu;
+struct cpu trap_cpu __attribute__((aligned(16))) = {};
 I32 active_pid;
 struct HolyThread __proc_list[PROC_NAME_MAXLEN] = {};
 
@@ -611,6 +611,12 @@ trap_entry:
 	'''
 	return s
 
+#.attribute arch, "rv64i2p0_m2p0_a2p0_f2p0_d2p0_c2p0"
+ASM_HEADER = '''
+.option nopic
+.attribute unaligned_access, 0
+.attribute stack_align, 16
+'''
 
 START_S = '''
 .section .text
@@ -674,8 +680,9 @@ static inline void uart_init(){
   set_reg(UART_SCR_OFFSET, 0x00); /* Set scratchpad */
 }
 '''
+USE_UART = '--no-uart' not in sys.argv
 
-def make(asm, spawn_funcs, use_uart=True, use_vga=True):
+def make(asm, spawn_funcs, use_uart=USE_UART, use_vga=True):
 	a = c2asm(
 		ARCH + ARCH_ASM + CPU_H + PROC_H + INTERRUPTS + TIMER + TRAP_C, 
 		{},[],
@@ -686,8 +693,8 @@ def make(asm, spawn_funcs, use_uart=True, use_vga=True):
 	print_asm(a)
 	trap_handler = asm2o(a, name='trap_handler')
 
-	if use_vga: s = [holygrail.START_VGA_S]
-	else: s = [START_S]
+	if use_vga: s = [ASM_HEADER,holygrail.START_VGA_S]
+	else: s = [ASM_HEADER,START_S]
 	s += [gen_trap_s(), clean_asm(asm)]
 	if use_vga:
 		s += [
@@ -727,13 +734,60 @@ def make(asm, spawn_funcs, use_uart=True, use_vga=True):
 	]
 	print(cmd)
 	subprocess.check_call(cmd)
-	if '--run' in sys.argv:
+	if '--run' in sys.argv or '--gdb' in sys.argv:
 		cmd = 'riscv64-unknown-elf-objcopy -O binary -S %s /tmp/firmware.bin' % elf
 		print(cmd)
 		subprocess.check_call(cmd.split())
-		cmd = 'qemu-system-riscv64 -machine virt -smp 2 -m 2G -serial stdio -bios /tmp/firmware.bin -s -device VGA'
-		print(cmd)
-		subprocess.check_call(cmd.split())
+		cmd = 'qemu-system-riscv64 -machine virt -smp 2 -m 2G -serial stdio -bios /tmp/firmware.bin -device VGA'
+		if '--gdb' in sys.argv:
+			cmd += ' -S -gdb tcp:localhost:1234,server,ipv4'
+			print(cmd)
+			proc = subprocess.Popen(cmd.split())
+			atexit.register(lambda: proc.kill())
+
+			gcmd = ['gdb-multiarch', '--batch', '--command=/tmp/script.gdb', elf]
+			if os.path.isfile('/usr/bin/xterm') and 0:
+				gcmd = ['xterm', '-hold', '-e', ' '.join(gcmd)]
+			elif os.path.isfile('/usr/bin/konsole'):
+				gcmd = ['konsole', '--separate', '--hold', '-e', ' '.join(gcmd)]
+
+			gdb_script = [
+				'set architecture riscv:rv64',
+				'target remote :1234',
+			]
+
+			if '--gdb-step' in sys.argv:
+				step1 = 10
+				step2 = 10
+				for aidx, arg in enumerate(sys.argv):
+					if arg=='--gdb-step':
+						try:
+							step1 = int(sys.argv[aidx+1])
+							step2 = int(sys.argv[aidx+2])
+						except: pass
+				for i in range(step1):
+					gdb_script += [
+						"echo '----------------------'",
+						'echo',
+						'bt',
+						'stepi %s' % step2,
+						'info registers',
+					]
+
+			else:
+				gdb_script += [
+				'continue',
+				'info registers',
+				'bt',
+				]
+			gdb_script.append('continue')
+			open('/tmp/script.gdb', 'wb').write('\n'.join(gdb_script).encode('utf-8'))
+
+			print(gcmd)
+			gdb = subprocess.check_call(gcmd)
+		else:
+			print(cmd)
+			subprocess.check_call(cmd.split())
 	return elf
 
 THREAD_API = '''
