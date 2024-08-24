@@ -126,7 +126,7 @@ def parse_holyg(ln):
 
 	return (cpu_core, thread_id,regs)
 
-def c2asm( c, reg_replace_map, spawn_funcs, opt=0, strip_backticks=True ):
+def c2asm( c, reg_replace_map={}, spawn_funcs=[], opt=0, strip_backticks=True, includes=None, defines=None ):
 	if type(c) is list: c = '\n'.join(c)
 	if strip_backticks:
 		a = []
@@ -166,9 +166,19 @@ def c2asm( c, reg_replace_map, spawn_funcs, opt=0, strip_backticks=True ):
 		#'-g', 
 		'-S', '-o', asm, tmp
 	]
+	if includes:
+		for inc in includes:
+			if not inc.startswith('-I'): inc = '-I'+inc
+			cmd.append(inc)
+	if defines:
+		for d in defines:
+			if not d.startswith('-D'): d = '-D'+d
+			cmd.append(d)
+	
 	print(cmd)
 	subprocess.check_call(cmd)
 	return open('/tmp/c2asm.S', 'rb').read().decode('utf-8')
+
 
 def asm2asm(data, func_reg_replace={}, reg_replace={}, debug=False, skip_calls=False):
 	#data = open(path,'rb').read().decode('utf-8')
