@@ -245,7 +245,7 @@ def asm2asm(data, func_reg_replace={}, reg_replace={}, debug=False, skip_calls=F
 
 	return '\n'.join(out)
 
-def parse_asm(ln, debug=False):
+def parse_asm(ln, debug=False, term_colors=True):
 	r = {}
 	if ln.strip().startswith('.'):
 		r['data'] = ln
@@ -253,6 +253,9 @@ def parse_asm(ln, debug=False):
 	elif ln.strip().startswith('#'):
 		r['comment'] = ln.strip()
 		return r
+	elif '#' in ln:
+		r['inline-comment'] = ln.split('#')[-1]
+		ln = ln.split('#')[0]
 	if debug: print(ln)
 	a = ln.strip().split()
 	ops = None
@@ -265,6 +268,9 @@ def parse_asm(ln, debug=False):
 		return r
 	elif len(a)==2:
 		inst, ops = a
+	elif len(a)==3:
+		inst, ops, lab = a
+		ops += lab
 	elif len(a)==4:
 		inst = a[0]
 		ops = ' '.join(a[1:])
@@ -288,7 +294,8 @@ def parse_asm(ln, debug=False):
 			if b not in r['regs']:
 				r['regs'].append(b)
 
-			if b in reg_colors:
+			if not term_colors: pass
+			elif b in reg_colors:
 				b = '\033[%sm%s\033[0m' % (reg_colors[b], b)
 			elif b.startswith('s'):
 				if b in S_COLORS:
@@ -314,10 +321,15 @@ def parse_asm(ln, debug=False):
 	vis = tuple(vis)
 	if inst in ('sret', 'sbreak'):
 		r['vis'] = 'system< %s >' % inst
-	elif inst in ('call', 'tail'):
+	elif inst == 'call':
 		r['vis'] = '%s(...)' % ops
+		r['call']=ops
+	elif inst == 'tail':
+		r['vis'] = '%s((...))' % ops
+		r['tail_call']=ops
 	elif inst == 'ble':
 		r['vis'] = 'if %s <= %s: goto %s' % vis
+		r['if_goto'] = vis
 	elif inst.startswith('sext.'):  ## sign extend
 		if inst.endswith('.w'):  ## 32bit word to 64bit
 			r['vis'] = '%s =(i64*)%s' % vis
@@ -329,6 +341,7 @@ def parse_asm(ln, debug=False):
 		}
 		for tag in map:
 			if inst.startswith(tag):
+				r['sym'] = map[tag]
 				if len(vis)==1:
 					x = vis[0]
 					r['vis'] = '%s %s' % (map[tag], x)
