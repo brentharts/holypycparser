@@ -259,6 +259,11 @@ def parse_asm(ln, debug=False, term_colors=True):
 	elif '#' in ln:
 		r['inline-comment'] = ln.split('#')[-1]
 		ln = ln.split('#')[0]
+	elif ln.endswith('*/'):
+		assert '/*' in ln
+		r['inline-comment'] = ln.split('/*')[-1][:-2]
+		ln = ln.split('/*')[0]
+
 	if debug: print(ln)
 	a = ln.strip().split()
 	ops = None
@@ -277,6 +282,9 @@ def parse_asm(ln, debug=False, term_colors=True):
 	elif len(a)==4:
 		inst = a[0]
 		ops = ' '.join(a[1:])
+	elif len(a) in (5,7):  ## FreeBSD hand written asm
+		inst = a[0].strip()
+		ops = ' '.join(a[1:])
 	else:
 		raise RuntimeError(len(a),ln)
 	if not ops:
@@ -290,8 +298,14 @@ def parse_asm(ln, debug=False, term_colors=True):
 		index = None
 		b = b.strip()
 		if '(' in b:
-			index = b.split('(')[0]
-			b = b.split('(')[-1][:-1]
+			if b.count('(')==1:
+				index = b.split('(')[0]
+				b = b.split('(')[-1][:-1]
+			else:
+				index = b.split(')')[0]
+				assert index.startswith('(')
+				index = index[1:]
+				b = b[ b.rindex('(') : ][1:-1]
 
 		if b in REGS:
 			if b not in r['regs']:
@@ -336,15 +350,19 @@ def parse_asm(ln, debug=False, term_colors=True):
 	elif inst.startswith('sext.'):  ## sign extend
 		if inst.endswith('.w'):  ## 32bit word to 64bit
 			r['vis'] = '%s =(i64*)%s' % vis
+	elif inst.startswith('fcvt.'):  ## float convert
+		r['vis'] = '%s =(float*)%s' % vis
 	else:
 		map = {'add':'+', 'div':'/',  'sll' : '<<', 'slr' : '>>', 
-			'l':'<-', 's':'->', 'neg':'-', 'rem':'%', 'mul':'*',
+			'l':'<-', 's':'->', 'fld':'<--float-', 'fsd': '-float-->',
+			'neg':'-', 'rem':'%', 'mul':'*', 'and': '&', 'or': '|',
 			'mv':'◀═┅┅',  ## atomic copy from reg to reg
 			'j':'goto',
 		}
 		for tag in map:
 			if inst.startswith(tag):
 				r['sym'] = map[tag]
+
 				if len(vis)==1:
 					x = vis[0]
 					r['vis'] = '%s %s' % (map[tag], x)
@@ -368,11 +386,19 @@ def parse_asm(ln, debug=False, term_colors=True):
 
 
 def print_asm(asm, *labels):
-	if asm.startswith('/') and len(asm) < 128:
+	if asm.startswith( ('/', './') ) and len(asm) < 128 and asm.endswith(('.s', '.S')):
 		if os.path.isfile(asm): asm = open(asm,'rb').read().decode('utf-8')
 	lab = None
+	mlcom = False
 	for idx, ln in enumerate(asm.splitlines()):
-		#print(ln)
+		if '--verbose' in sys.argv: print(ln)
+		if ln.strip().startswith('/*'):
+			mlcom = True
+		if mlcom:
+			print(ln)
+			if '*/' in ln: mlcom = False
+			continue
+		if not ln.strip(): continue
 		a = parse_asm(ln)
 		if 'label' in a:
 			lab = a['label']
