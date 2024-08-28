@@ -4,6 +4,9 @@
 import os, sys, subprocess, json, atexit
 import holypycparser as hpp
 import pycparser, holygrail
+GCC = 'riscv64-unknown-elf-gcc'
+if 'fedora' in os.uname().nodename:
+	GCC = 'riscv64-linux-gnu-gcc'
 
 tests = [
 '''
@@ -157,7 +160,7 @@ def c2asm( c, reg_replace_map={}, spawn_funcs=[], opt=0, strip_backticks=True, i
 	else: opt = '-O%s' % opt
 	asm = '/tmp/c2asm.S'
 	cmd = [
-		'riscv64-unknown-elf-gcc', '-mcmodel=medany', '-fomit-frame-pointer', '-ffunction-sections',
+		GCC, '-mcmodel=medany', '-fomit-frame-pointer', '-ffunction-sections',
 		'-ffreestanding', '-nostdlib', '-nostartfiles', '-nodefaultlibs', '-fno-tree-loop-distribute-patterns', 
 		#'-fno-optimize-register-move', '-fno-sched-pressure', '-fno-sched-interblock',
 		'-ffixed-t0', '-ffixed-t1', '-ffixed-t2', '-ffixed-t3', '-ffixed-t4', '-ffixed-t5', '-ffixed-t6',
